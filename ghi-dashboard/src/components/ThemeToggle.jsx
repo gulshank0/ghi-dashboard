@@ -1,13 +1,24 @@
 function ThemeToggle({ theme, onToggle }) {
   return (
-    <button
-      className="theme-toggle"
-      onClick={onToggle}
-      aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-      title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+    <select
+      className="theme-selector"
+      value={theme}
+      onChange={onToggle}
+      aria-label="Select theme"
+      style={{
+        backgroundColor: "var(--bg-card)",
+        color: "var(--text-primary)",
+        border: "1px solid var(--border)",
+        padding: "8px 12px",
+        borderRadius: "8px",
+        cursor: "pointer",
+        outline: "none",
+        fontWeight: "500"
+      }}
     >
-      <div className="theme-toggle-knob">{theme === "dark" ? "🌙" : "☀️"}</div>
-    </button>
+      <option value="dark"> Dark Theme</option>
+      <option value="light"> Light Theme</option>
+    </select>
   );
 }
 

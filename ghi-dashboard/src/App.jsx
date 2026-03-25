@@ -99,7 +99,6 @@ function App() {
       {/* Header */}
       <header className="header">
         <div className="header-left">
-          <span className="header-badge">☀ Live Data</span>
           <h1 className="header-title">GHI Dashboard</h1>
           <p className="header-subtitle">
             Global Horizontal Irradiance — Solar resource monitoring
