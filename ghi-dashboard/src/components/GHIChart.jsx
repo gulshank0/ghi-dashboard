@@ -1,7 +1,29 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import React, { useRef, useState, useMemo } from "react";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip as ChartTooltip,
+  Filler,
+  Legend
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  ChartTooltip,
+  Filler,
+  Legend
+);
 
 function GHIChart({ data, theme }) {
-  const canvasRef = useRef(null);
   const wrapperRef = useRef(null);
   const [tooltip, setTooltip] = useState({
     visible: false,
@@ -10,143 +32,122 @@ function GHIChart({ data, theme }) {
     date: "",
     value: 0,
   });
-  const animProgress = useRef(0);
-  const animFrame = useRef(null);
 
-  // Chart drawing constants
-  const PADDING = { top: 20, right: 20, bottom: 45, left: 60 };
+  const isDark = theme === "dark";
 
-  const getColors = useCallback(() => {
-    const isDark = theme === "dark";
+  const colors = useMemo(() => {
     return {
       line: "#f97316",
       gradientStart: isDark ? "rgba(249,115,22,0.45)" : "rgba(234,88,12,0.3)",
       gradientEnd: isDark ? "rgba(249,115,22,0.02)" : "rgba(234,88,12,0.01)",
       grid: isDark ? "rgba(48,54,61,0.5)" : "rgba(0,0,0,0.06)",
       axisText: isDark ? "#8b949e" : "#555770",
-      peakGlow: isDark ? "rgba(249,115,22,0.6)" : "rgba(234,88,12,0.4)",
       crosshair: isDark ? "rgba(139,148,158,0.3)" : "rgba(0,0,0,0.1)",
+      peakGlow: isDark ? "rgba(249,115,22,0.6)" : "rgba(234,88,12,0.4)",
     };
-  }, [theme]);
+  }, [isDark]);
 
-  const drawChart = useCallback(
-    (progress = 1) => {
-      const canvas = canvasRef.current;
-      const wrapper = wrapperRef.current;
-      if (!canvas || !wrapper || data.length === 0) return;
+  const chartData = useMemo(() => {
+    if (!data || data.length === 0) {
+      return { labels: [], datasets: [] };
+    }
 
-      const dpr = window.devicePixelRatio || 1;
-      const rect = wrapper.getBoundingClientRect();
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+    const labels = data.map(d => {
+      const date = new Date(d.timestamp);
+      return date.toLocaleDateString([], {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    });
 
-      const ctx = canvas.getContext("2d");
-      ctx.scale(dpr, dpr);
+    const ghiValues = data.map(d => d.ghi);
 
-      const w = rect.width;
-      const h = rect.height;
-      const plotW = w - PADDING.left - PADDING.right;
-      const plotH = h - PADDING.top - PADDING.bottom;
+    return {
+      labels,
+      datasets: [
+        {
+          label: 'GHI',
+          data: ghiValues,
+          borderColor: colors.line,
+          backgroundColor: (context) => {
+            const chart = context.chart;
+            const { ctx, chartArea } = chart;
 
-      const colors = getColors();
+            if (!chartArea) {
+              return null;
+            }
+            
+            const gradient = ctx.createLinearGradient(
+              0,
+              chartArea.top,
+              0,
+              chartArea.bottom
+            );
+            gradient.addColorStop(0, colors.gradientStart);
+            gradient.addColorStop(1, colors.gradientEnd);
+            return gradient;
+          },
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 5,
+          pointHoverBackgroundColor: colors.line,
+          pointHoverBorderColor: '#fff',
+          pointHoverBorderWidth: 2,
+          fill: true,
+          tension: 0,
+        }
+      ]
+    };
+  }, [data, colors]);
 
-      // Clear
-      ctx.clearRect(0, 0, w, h);
+  const crosshairPlugin = useMemo(() => ({
+    id: 'crosshair',
+    afterDraw: (chart) => {
+      if (chart.tooltip?._active?.length) {
+        const activePoint = chart.tooltip._active[0];
+        const ctx = chart.ctx;
+        const x = activePoint.element.x;
+        const y = activePoint.element.y;
+        const topY = chart.scales.y.top;
+        const bottomY = chart.scales.y.bottom;
+        const leftX = chart.scales.x.left;
+        const rightX = chart.scales.x.right;
 
-      // Data ranges
-      const ghiValues = data.map((d) => d.ghi);
-      const maxGHI = Math.max(...ghiValues) * 1.1;
-      const minGHI = 0;
-
-      const toX = (i) => PADDING.left + (i / (data.length - 1)) * plotW;
-      const toY = (val) =>
-        PADDING.top + plotH - ((val - minGHI) / (maxGHI - minGHI)) * plotH;
-
-      // Grid lines
-      ctx.strokeStyle = colors.grid;
-      ctx.lineWidth = 1;
-      const yTicks = 5;
-      for (let i = 0; i <= yTicks; i++) {
-        const yVal = minGHI + (maxGHI - minGHI) * (i / yTicks);
-        const y = toY(yVal);
+        ctx.save();
         ctx.beginPath();
-        ctx.setLineDash([4, 4]);
-        ctx.moveTo(PADDING.left, y);
-        ctx.lineTo(w - PADDING.right, y);
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = colors.crosshair;
+        ctx.lineWidth = 1;
+
+        // Vertical line
+        ctx.moveTo(x, topY);
+        ctx.lineTo(x, bottomY);
+        
+        // Horizontal line
+        ctx.moveTo(leftX, y);
+        ctx.lineTo(rightX, y);
+        
         ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Y labels
-        ctx.fillStyle = colors.axisText;
-        ctx.font = "11px Inter, sans-serif";
-        ctx.textAlign = "right";
-        ctx.textBaseline = "middle";
-        ctx.fillText(yVal.toFixed(1), PADDING.left - 10, y);
+        ctx.restore();
       }
+    }
+  }), [colors.crosshair]);
 
-      // X labels — always show dates since data is daily
-      const xLabelCount = Math.min(data.length, w < 500 ? 4 : 7);
-      const step = Math.max(1, Math.floor(data.length / xLabelCount));
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      ctx.fillStyle = colors.axisText;
-      ctx.font = "11px Inter, sans-serif";
-
-      for (let i = 0; i < data.length; i += step) {
-        const x = toX(i);
-        const date = new Date(data[i].timestamp);
-        const label = date.toLocaleDateString([], {
-          month: "short",
-          day: "numeric",
-        });
-        ctx.fillText(label, x, h - PADDING.bottom + 12);
-      }
-
-      // Animated data slice
-      const visibleCount = Math.max(2, Math.floor(data.length * progress));
-      const visibleData = data.slice(0, visibleCount);
-
-      // Area gradient
-      const gradient = ctx.createLinearGradient(
-        0,
-        PADDING.top,
-        0,
-        h - PADDING.bottom,
-      );
-      gradient.addColorStop(0, colors.gradientStart);
-      gradient.addColorStop(1, colors.gradientEnd);
-
-      // Draw area
-      ctx.beginPath();
-      ctx.moveTo(toX(0), toY(visibleData[0].ghi));
-      for (let i = 1; i < visibleData.length; i++) {
-        ctx.lineTo(toX(i), toY(visibleData[i].ghi));
-      }
-      ctx.lineTo(toX(visibleData.length - 1), h - PADDING.bottom);
-      ctx.lineTo(toX(0), h - PADDING.bottom);
-      ctx.closePath();
-      ctx.fillStyle = gradient;
-      ctx.fill();
-
-      // Draw line
-      ctx.beginPath();
-      ctx.moveTo(toX(0), toY(visibleData[0].ghi));
-      for (let i = 1; i < visibleData.length; i++) {
-        ctx.lineTo(toX(i), toY(visibleData[i].ghi));
-      }
-      ctx.strokeStyle = colors.line;
-      ctx.lineWidth = 2;
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.stroke();
-
-      // Peak marker
-      if (progress >= 1) {
-        const peakIdx = ghiValues.indexOf(Math.max(...ghiValues));
-        if (peakIdx >= 0 && peakIdx < data.length) {
-          const px = toX(peakIdx);
-          const py = toY(data[peakIdx].ghi);
-
+  const peakMarkerPlugin = useMemo(() => ({
+    id: 'peakMarker',
+    afterDraw: (chart) => {
+      if (!data || data.length === 0) return;
+      const ghiValues = data.map(d => d.ghi);
+      const maxGHI = Math.max(...ghiValues);
+      const peakIdx = ghiValues.indexOf(maxGHI);
+      if (peakIdx >= 0) {
+        const meta = chart.getDatasetMeta(0);
+        if (meta.data[peakIdx]) {
+          const px = meta.data[peakIdx].x;
+          const py = meta.data[peakIdx].y;
+          const ctx = chart.ctx;
+           
           // Outer glow
           ctx.beginPath();
           ctx.arc(px, py, 8, 0, Math.PI * 2);
@@ -166,150 +167,141 @@ function GHIChart({ data, theme }) {
           ctx.fill();
         }
       }
+    }
+  }), [data, colors]);
 
-      // Y-axis label
-      ctx.save();
-      ctx.translate(14, h / 2);
-      ctx.rotate(-Math.PI / 2);
-      ctx.fillStyle = colors.axisText;
-      ctx.font = "12px Inter, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText("kWh/m²/day", 0, 0);
-      ctx.restore();
-    },
-    [data, theme, getColors],
-  );
+  const options = useMemo(() => {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      layout: {
+        padding: {
+          top: 5,
+          right: 20,
+        }
+      },
+      animation: {
+        duration: 800,
+        easing: 'easeOutCubic'
+      },
+      plugins: {
+        legend: {
+          display: false,
+        },
+        tooltip: {
+          enabled: false,
+          external: (context) => {
+            const { chart, tooltip: chartjsTooltip } = context;
+            
+            if (chartjsTooltip.opacity === 0) {
+              setTooltip(prev => ({ ...prev, visible: false }));
+              return;
+            }
 
-  // Animation on data change
-  useEffect(() => {
-    animProgress.current = 0;
-    const startTime = performance.now();
-    const duration = 800;
+            const dataPoint = chartjsTooltip.dataPoints[0];
+            if (!dataPoint) return;
 
-    const animate = (now) => {
-      const elapsed = now - startTime;
-      animProgress.current = Math.min(1, elapsed / duration);
-      // ease out cubic
-      const eased = 1 - Math.pow(1 - animProgress.current, 3);
-      drawChart(eased);
-      if (animProgress.current < 1) {
-        animFrame.current = requestAnimationFrame(animate);
-      }
+            const rect = wrapperRef.current?.getBoundingClientRect();
+            if (!rect) return;
+
+            let tooltipX = chartjsTooltip.caretX + 15;
+            let tooltipY = chartjsTooltip.caretY - 40;
+            if (tooltipX + 160 > rect.width) tooltipX = chartjsTooltip.caretX - 165;
+            if (tooltipY < 10) tooltipY = chartjsTooltip.caretY + 15;
+
+            setTooltip({
+              visible: true,
+              x: tooltipX,
+              y: tooltipY,
+              date: dataPoint.label,
+              value: dataPoint.raw.toFixed(3),
+            });
+          }
+        },
+      },
+      scales: {
+        x: {
+          grid: {
+            display: false,
+            drawBorder: false,
+          },
+          border: {
+            display: false
+          },
+          ticks: {
+            color: colors.axisText,
+            font: {
+              family: 'Inter, sans-serif',
+              size: 11
+            },
+            maxRotation: 0,
+            autoSkip: true,
+            maxTicksLimit: typeof window !== "undefined" ? (window.innerWidth < 500 ? 5 : 8) : 8,
+            callback: function(value, index) {
+              if (data && data[index]) {
+                  const date = new Date(data[index].timestamp);
+                  return date.toLocaleDateString([], {
+                    month: "short",
+                    day: "numeric",
+                  });
+              }
+              return this.getLabelForValue(value);
+            }
+          }
+        },
+        y: {
+          beginAtZero: true,
+          suggestedMax: data && data.length > 0 ? Math.max(...data.map(d => d.ghi)) * 1.1 : undefined,
+          grid: {
+            color: colors.grid,
+            tickLength: 0,
+            borderDash: [4, 4],
+          },
+          border: {
+            display: false,
+            dash: [4, 4]
+          },
+          ticks: {
+            color: colors.axisText,
+            font: {
+              family: 'Inter, sans-serif',
+              size: 11
+            },
+            maxTicksLimit: 6,
+            callback: function(value) {
+              return value.toFixed(1);
+            }
+          },
+          title: {
+            display: true,
+            text: 'kWh/m²/day',
+            color: colors.axisText,
+            font: {
+              family: 'Inter, sans-serif',
+              size: 12
+            },
+            padding: {bottom: 10}
+          }
+        }
+      },
     };
+  }, [data, colors]);
 
-    animFrame.current = requestAnimationFrame(animate);
-    return () => {
-      if (animFrame.current) cancelAnimationFrame(animFrame.current);
-    };
-  }, [data, drawChart]);
+  const plugins = useMemo(() => [crosshairPlugin, peakMarkerPlugin], [crosshairPlugin, peakMarkerPlugin]);
 
-  // Resize handler
-  useEffect(() => {
-    const handleResize = () => drawChart(1);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [drawChart]);
-
-  // Mouse move for tooltip
-  const handleMouseMove = useCallback(
-    (e) => {
-      const canvas = canvasRef.current;
-      const wrapper = wrapperRef.current;
-      if (!canvas || !wrapper || data.length === 0) return;
-
-      const rect = wrapper.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const plotW = rect.width - PADDING.left - PADDING.right;
-
-      // Find closest data point
-      const relX = mouseX - PADDING.left;
-      if (relX < 0 || relX > plotW) {
-        setTooltip((prev) => ({ ...prev, visible: false }));
-        return;
-      }
-
-      const idx = Math.round((relX / plotW) * (data.length - 1));
-      const clampedIdx = Math.max(0, Math.min(data.length - 1, idx));
-      const point = data[clampedIdx];
-
-      const plotH = rect.height - PADDING.top - PADDING.bottom;
-      const maxGHI = Math.max(...data.map((d) => d.ghi)) * 1.1;
-      const pointX = PADDING.left + (clampedIdx / (data.length - 1)) * plotW;
-      const pointY = PADDING.top + plotH - (point.ghi / maxGHI) * plotH;
-
-      // Draw crosshair
-      drawChart(1);
-      const ctx = canvas.getContext("2d");
-      const dpr = window.devicePixelRatio || 1;
-      ctx.save();
-      ctx.scale(dpr, dpr);
-
-      const colors = getColors();
-      ctx.strokeStyle = colors.crosshair;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-
-      // Vertical line
-      ctx.beginPath();
-      ctx.moveTo(pointX, PADDING.top);
-      ctx.lineTo(pointX, rect.height - PADDING.bottom);
-      ctx.stroke();
-
-      // Horizontal line
-      ctx.beginPath();
-      ctx.moveTo(PADDING.left, pointY);
-      ctx.lineTo(rect.width - PADDING.right, pointY);
-      ctx.stroke();
-
-      ctx.setLineDash([]);
-
-      // Hover dot
-      ctx.beginPath();
-      ctx.arc(pointX, pointY, 5, 0, Math.PI * 2);
-      ctx.fillStyle = colors.line;
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(pointX, pointY, 2, 0, Math.PI * 2);
-      ctx.fillStyle = "#fff";
-      ctx.fill();
-
-      ctx.restore();
-
-      // Position tooltip
-      let tooltipX = pointX + 15;
-      let tooltipY = pointY - 40;
-      if (tooltipX + 160 > rect.width) tooltipX = pointX - 165;
-      if (tooltipY < 10) tooltipY = pointY + 15;
-
-      const date = new Date(point.timestamp);
-      setTooltip({
-        visible: true,
-        x: tooltipX,
-        y: tooltipY,
-        date: date.toLocaleDateString([], {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        }),
-        value: point.ghi.toFixed(3),
-      });
-    },
-    [data, drawChart, getColors],
-  );
-
-  const handleMouseLeave = useCallback(() => {
-    setTooltip((prev) => ({ ...prev, visible: false }));
-    drawChart(1);
-  }, [drawChart]);
+  if (!data || data.length === 0) return null;
 
   return (
     <div
       className="chart-canvas-wrapper"
       ref={wrapperRef}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
+      onMouseLeave={() => setTooltip(prev => ({ ...prev, visible: false }))}
     >
-      <canvas ref={canvasRef} />
+      <Line data={chartData} options={options} plugins={plugins} />
       <div
         className={`chart-tooltip ${tooltip.visible ? "" : "hidden"}`}
         style={{ left: tooltip.x, top: tooltip.y }}
